@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/em-core",
+    "crates/em-resolve",
+    "crates/em-player",
+    "crates/em-ui",
+    "crates/em-smoke",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/gdtdpt/ElderMonitor"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# ureq 2.x：阻塞式、纯 Rust TLS（rustls），不依赖系统 OpenSSL，Windows/macOS 行为一致。
+# 刻意不用 3.x：其配置 API 尚在变动，M0 阶段稳定性优先。
+ureq = "2"
+libloading = "0.8"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

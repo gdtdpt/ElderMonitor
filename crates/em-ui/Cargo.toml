@@ -1,0 +1,10 @@
+[package]
+name = "em-ui"
+description = "窗口、布局渲染与交互（M1 起实现）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

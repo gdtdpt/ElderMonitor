@@ -1,0 +1,14 @@
+[package]
+name = "em-resolve"
+description = "B 站直播间流地址解析（房间号/链接 → flv 直链 + 请求头）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+em-core = { path = "../em-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }

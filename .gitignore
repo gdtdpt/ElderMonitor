@@ -1,0 +1,14 @@
+# 构建产物
+/target/
+/dist/
+
+# libmpv 二进制（由 tools/fetch-mpv.* 获取，不进仓库）
+/vendor/
+
+# 个人配置（直播间房间号、音量等）
+/config/
+
+# 杂项
+*.log
+.DS_Store
+Thumbs.db
