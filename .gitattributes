@@ -1,0 +1,22 @@
+# 跨平台换行约定
+#
+# 本仓库在 Windows 与 macOS 之间来回切换，必须显式固定换行，
+# 否则 .sh 被 checkout 成 CRLF 后，macOS 上会报 `bash\r: bad interpreter`。
+
+* text=auto
+
+# 源码与文档统一 LF
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.sh    text eol=lf
+*.json  text eol=lf
+
+# PowerShell 脚本在 Windows 上用 CRLF（UTF-8 with BOM 由脚本本身保证）
+*.ps1   text eol=crlf
+
+# 二进制：不让 git 做任何转换
+*.dll   binary
+*.dylib binary
+*.7z    binary
+*.exe   binary
