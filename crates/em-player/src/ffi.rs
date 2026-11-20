@@ -64,3 +64,53 @@ pub const MPV_END_FILE_REASON_STOP: c_int = 2;
 pub const MPV_END_FILE_REASON_QUIT: c_int = 3;
 pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
 pub const MPV_END_FILE_REASON_REDIRECT: c_int = 5;
+
+// ================= render.h / render_gl.h =================
+// 与 `vendor/mpv/include/mpv/render.h`、`render_gl.h` 一一对应。
+
+/// 不透明渲染上下文（render.h）。
+pub type mpv_render_context = c_void;
+
+/// mpv_render_param（render.h）：`{ type; void *data; }`。
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct mpv_render_param {
+    pub param_type: c_int,
+    pub data: *mut c_void,
+}
+
+// ---- mpv_render_param_type（render.h，截取本项目用到的项）----
+pub const MPV_RENDER_PARAM_INVALID: c_int = 0;
+pub const MPV_RENDER_PARAM_API_TYPE: c_int = 1;
+pub const MPV_RENDER_PARAM_OPENGL_INIT_PARAMS: c_int = 2;
+pub const MPV_RENDER_PARAM_OPENGL_FBO: c_int = 3;
+pub const MPV_RENDER_PARAM_FLIP_Y: c_int = 4;
+pub const MPV_RENDER_PARAM_DEPTH: c_int = 5;
+
+/// render.h：`MPV_RENDER_API_TYPE_OPENGL`。
+pub const MPV_RENDER_API_TYPE_OPENGL: &[u8] = b"opengl\0";
+
+// ---- mpv_render_update_flag（render.h）----
+pub const MPV_RENDER_UPDATE_FRAME: u64 = 1 << 0;
+
+/// mpv_opengl_fbo（render_gl.h）：描述一个 GL 渲染目标。
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct mpv_opengl_fbo {
+    pub fbo: c_int,
+    pub w: c_int,
+    pub h: c_int,
+    pub internal_format: c_int,
+}
+
+/// mpv_opengl_init_params（render_gl.h）。
+///
+/// `get_proc_address` 由调用方实现（本项目用 glutin 的
+/// `GlDisplay::get_proc_address`），libmpv 只通过它解析 GL 函数，
+/// 不自己链接 GL。
+#[repr(C)]
+pub struct mpv_opengl_init_params {
+    pub get_proc_address:
+        Option<unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char) -> *mut c_void>,
+    pub get_proc_address_ctx: *mut c_void,
+}

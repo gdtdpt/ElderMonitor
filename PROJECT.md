@@ -286,12 +286,12 @@ score = 1 − Σ(格子有效视频面积) / A面积          // 黑边与空隙
 | 里程碑 | 内容 | 验收 | 状态 |
 |---|---|---|---|
 | **M0** 骨架 | workspace 五 crate + 构建脚本 + `tools/fetch-mpv.*` + `em-smoke` CLI（房间号 → 解析 → mpv 播放**音频**并打印实际 qn） | `cargo test` 绿；em-smoke 在 Windows 与 macOS 均能出声 | ✅ 2026-11-19（Windows；macOS 待首跑） |
-| **M1** 单路直渲 | 方案 A 第一步：winit + OpenGL（WGL/CGL）+ mpv 渲染 API，单路画面画满窗口 | 一个真实直播间在**两台机器上**都出画面出声音，10 分钟断流自续 | ⬜ |
+| **M1** 单路直渲 | 方案 A 第一步：winit + OpenGL（WGL/CGL）+ mpv 渲染 API，单路画面画满窗口 | 一个真实直播间在**两台机器上**都出画面出声音，10 分钟断流自续 | ✅ 2026-11-20 Windows（329 帧 / 亮度 46/255 / 截帧 PASS；macOS 待首跑） |
 | **M2** 多路合成 | mpv → FBO 纹理合成；**布局引擎（行式打包 + 候选评分择优）**、每路独立 volume/mute、单路停止 | 任意 N 排布正确且比例误差 ≤1%；混入竖屏格不压扁；逐路调音量互不影响；双平台 | ⬜ |
 | **M3** 记录库与主格 | 记录库两态（悬浮下拉 / 钉子固定）、格子内容切换、主格布局、em.json 持久化、控制条浮层化 | 重启恢复全部状态；换格不丢音量；钉住/取消钉住立即重排；双平台 | ⬜ |
 | **M4** 打包 | 双平台打包（Windows zip / macOS app bundle）、版本号、发布说明 | 干净机器解压可跑 | ⬜ |
 
-**M1 是全项目风险闸门**：interop 若在 M1 验证不过，启动方案 B 回退（Windows-only，macOS 暂停等 A 破局）。
+**M1 是全项目风险闸门**：interop 已在 Windows 实测通过（2026-11-20），方案 A 主线确认可行；macOS 首跑是 M2 前的待办。
 
 每个里程碑遵守既有约定：**构建 → 自测 → UI 冒烟（截图自闭环）→ 用户验收通过后才 commit/tag**；版本号只留给真机验证通过的构建。
 
@@ -308,6 +308,19 @@ score = 1 − Σ(格子有效视频面积) / A面积          // 黑边与空隙
 | 库获取脚本 | `tools/fetch-mpv.ps1`、`tools/fetch-mpv.sh` | Windows 全流程实测（下载→解压→落盘） |
 
 合计 **47 个测试**。M0 未覆盖：`em-ui` 是空 crate（M1 起实现）。
+
+### 5.2 M1 交付清单
+
+| 产物 | 位置 | 验证结果 |
+|---|---|---|
+| 渲染 API FFI + `RenderContext` | `crates/em-player/src/ffi.rs`、`render.rs` | FFI 对着 vendor 头文件写；真机 create/render/回调全链路通 |
+| winit + glutin + glow 窗口层 | `crates/em-ui/src/smoke.rs` | 960x540（DPI 后 1920x1080）窗口，mpv render API 直渲默认 framebuffer |
+| `--gui` 冒烟（像素自检 + PNG 截帧） | `crates/em-smoke`、`em-ui/png.rs` | 真实 B 站直播间 329 帧 / 亮度 46/255 / PASS；截帧人工确认是直播内容 |
+| 零依赖 PNG 编码器 | `crates/em-ui/src/png.rs` | 结构级单测 + CRC32 已知值校验 |
+
+**实测踩坑（详见 `docs/dev-guide.md` §8）**：FFI 上下文指针必须堆分配且地址终身稳定（两个真实段错误：
+栈上 resolver、struct move 后 Box 头部搬家）；glow 构造必须在 GL context current 之后；glutin 0.32
+Surface/Context 分离模型。测试总数 **54 个**（47 → +em-ui 7 个）。
 
 ## 6. 决策记录
 
@@ -332,6 +345,8 @@ score = 1 − Σ(格子有效视频面积) / A面积          // 黑边与空隙
 | 2026-11-19 | B 站解析**不实现 wbi 签名** | 实测（未登录、无 Cookie）`getRoomPlayInfo` 直接 `code=0`；少一个会随改版失效的环节。风控升级时在 `bilibili.rs` 内补即可 |
 | 2026-11-19 | v1 接受未登录 720p（qn=250） | 6 个房间实测 `current_qn` 全为 250（请求 10000），匿名 buvid3 无效；多路同屏下 720p 本就是合适档位 |
 | 2026-11-19 | 用 `em-smoke` CLI 作为 M0 验收载体 | 无窗口即可验证「解析 + 解码 + 出声」，新机器第一分钟就能判断环境是否可用 |
+| 2026-11-20 | FFI 上下文指针一律「双 Box / 堆分配、地址终身稳定」 | mpv 长期持有 resolver 与 update callback 裸指针；栈上局部值和随 struct 搬家的 Box 头部各造成一次真实段错误 |
+| 2026-11-20 | GUI 冒烟用「glReadPixels 亮度均值 + PNG 截帧」自闭环 | 不依赖人眼：亮度 >5/255 且回调/渲染计数在动即 PASS，截帧可再人工复核 |
 
 ## 7. 风险与已知坑
 

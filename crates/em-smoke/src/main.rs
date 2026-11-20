@@ -13,23 +13,26 @@ use em_player::{EndReason, Event, Lib, Player, PlayerOptions};
 use em_resolve::{ResolveError, resolve};
 
 const HELP: &str = "\
-em-smoke — ElderMonitor M0 自测
+em-smoke — ElderMonitor 自测
 
 用法：
   em-smoke <房间号|直播间链接> [选项]
+  em-smoke <房间号|直播间链接> --gui [选项]   开窗口渲染画面并截帧自检（M1）
   em-smoke --check-lib
 
 选项：
-  --seconds <秒>   播放时长，默认 12
+  --seconds <秒>   播放时长，默认 12（--gui 模式取整为秒）
   --volume <0-100> 音量，默认 40
   --mute           静音启动（仍会解码，用来测「只看画面」的场景）
+  --gui            开窗口渲染视频画面，结束帧存 PNG 并做亮度自检
+  --png <路径>     --gui 的截帧输出路径，默认 target/gui-frame.png
   --no-play        只解析，不加载播放器
   --check-lib      只检查 libmpv 能否加载，并列出查找过的路径
   -h, --help       显示本帮助
 
 退出码：
   0 通过    1 用法错误   2 解析失败   3 未开播
-  4 播放器错误          5 播放未达标（没加载/没音频/中途断流）
+  4 播放器错误          5 播放未达标（没加载/没音频/中途断流/画面全黑）
 
 环境变量：
   EM_MPV=<动态库完整路径>   指定 libmpv，覆盖自动查找
@@ -43,6 +46,8 @@ struct Args {
     muted: bool,
     check_lib: bool,
     no_play: bool,
+    gui: bool,
+    png: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -141,6 +146,11 @@ fn run(target: &str, args: &Args) -> Option<ExitCode> {
         println!("[2/3] 跳过（--no-play）");
         println!("[3/3] 跳过（--no-play）");
         return Some(ExitCode::SUCCESS);
+    }
+
+    // ---------- 2. GUI 模式：开窗口渲染画面 ----------
+    if args.gui {
+        return run_gui(&stream, args);
     }
 
     // ---------- 2. 加载 libmpv ----------
@@ -294,6 +304,46 @@ fn run(target: &str, args: &Args) -> Option<ExitCode> {
     }
 }
 
+fn run_gui(stream: &em_resolve::StreamUrl, args: &Args) -> Option<ExitCode> {
+    let seconds = args.seconds.max(1.0).round() as u32;
+    let png_path = match &args.png {
+        Some(p) => std::path::PathBuf::from(p),
+        None => std::path::PathBuf::from("target").join("gui-frame.png"),
+    };
+    if let Some(dir) = png_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+
+    println!("[2/3] 加载 libmpv + 建窗口（vo=libmpv，渲染 API）");
+    println!(
+        "[3/3] 渲染 {seconds}s（音量 {}{}），结束帧 → {}",
+        args.volume,
+        if args.muted { "，静音" } else { "" },
+        png_path.display()
+    );
+
+    let volume = if args.muted { 0 } else { args.volume };
+    let report = match em_ui::smoke_single(stream.clone(), seconds, volume, png_path) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("      失败   {e}");
+            return Some(ExitCode::from(4));
+        }
+    };
+
+    println!("      结果   {report}");
+    if report.is_pass() {
+        println!("      结论   PASS（画面非黑、回调与渲染都在动）");
+        Some(ExitCode::SUCCESS)
+    } else {
+        println!(
+            "      结论   FAIL（亮度 {:.1}、回调 {}、渲染 {}，三者需同时达标）",
+            report.mean_luma, report.update_callbacks, report.frames_rendered
+        );
+        Some(ExitCode::from(5))
+    }
+}
+
 fn check_lib() -> ExitCode {
     println!("检查 libmpv");
     let candidates = em_player::candidate_paths();
@@ -328,6 +378,8 @@ fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         muted: false,
         check_lib: false,
         no_play: false,
+        gui: false,
+        png: None,
     };
 
     while let Some(arg) = it.next() {
@@ -336,6 +388,11 @@ fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
             "--check-lib" => args.check_lib = true,
             "--no-play" => args.no_play = true,
             "--mute" => args.muted = true,
+            "--gui" => args.gui = true,
+            "--png" => {
+                let v = it.next().ok_or("--png 缺少路径参数")?;
+                args.png = Some(v);
+            }
             "--seconds" => {
                 let v = it.next().ok_or("--seconds 缺少参数")?;
                 let n: f64 = v.parse().map_err(|_| "--seconds 需要数字")?;

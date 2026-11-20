@@ -3,7 +3,7 @@
 > 面向开发者 / agent。环境搭建看 `SETUP.md`，设计规范看 `PROJECT.md`（单一事实源）。
 > 使用者文档是 `README.md`——**不要**把开发者内容写进 README。
 >
-> 当前进度：**M0 完成**（2026-11-19，Windows 实测；macOS 待首跑）→ 下一个里程碑是 M1 单路直渲。
+> 当前进度：**M1 完成**（2026-11-20，Windows 实测：真实直播间 1920x1080 渲染 PASS，截帧非黑；macOS 待首跑）→ 下一个是 M2 多路合成。
 
 ---
 
@@ -14,7 +14,7 @@
 ```
 em-resolve  房间号 → flv 直链 + Referer       （网络）
 em-player   flv 直链 → libmpv 实例 → 声音/画面 （解码）
-em-ui       多路 → 布局 → 叠加控件             （M1 起）
+em-ui       多路 → 布局 → 叠加控件             （M1 起实现：winit + glutin + glow 已就位）
 ```
 
 布局不是固定网格：格子数 = 显示列长度，位置由「每路宽高比 + 是否主格 + 记录库是否钉住」
@@ -49,8 +49,9 @@ C:\Users\<你>\Develop\ElderMonitor\
 git clone https://github.com/gdtdpt/ElderMonitor.git
 cd ElderMonitor
 tools\fetch-mpv.ps1          # 30MB 归档 → vendor\mpv\libmpv-2.dll（117MB）
-tools\build.ps1              # release + 47 个测试 + dist\
+tools\build.ps1              # release + 54 个测试 + dist\
 .\dist\em-smoke.exe 7734200  # 应该出声，最后一行 PASS
+.\dist\em-smoke.exe 7734200 --gui   # 开窗口渲染画面，PASS + target\gui-frame.png（M1）
 ```
 
 macOS 把两条命令换成 `bash tools/fetch-mpv.sh` 和 `bash tools/build.sh`。
@@ -156,21 +157,46 @@ Windows 启动时会把控制台代码页设成 65001，否则中文乱码。
 
 约定：新增解析/布局逻辑必须先补单测；UI 层（M1 起）用「启动即截图」自闭环，不来回找用户截图。
 
-## 8. 下一步（M1 单路直渲）
+## 8. M1 已完成：单路直渲（怎么做成的 + 踩过的坑）
 
-目标：一个窗口显示一路直播画面，10 分钟不断流。
+**入口**：`em-smoke --gui <房间号>` —— 开 960x540 逻辑窗口（物理像素随 DPI 缩放，本机是 1920x1080）、
+mpv 渲染 API 直渲到默认 framebuffer、结束帧写 `target/gui-frame.png` 并做亮度自检（PASS = 非黑 + 回调/渲染都在动）。
 
-1. `em-ui` 加依赖：`winit`（窗口 + 事件循环）、`glutin`（创建 OpenGL context，Windows 走 WGL、
-   macOS 走 NSOpenGL/CGL）、`glow`（GL 函数指针）。**版本在动手时确认，别抄本文的版本号**
-2. `em-player` 补渲染 API 的 FFI：`mpv_render_context_create` / `mpv_render_context_render` /
-   `mpv_render_context_report_swap` / `mpv_render_context_set_update_callback`，
-   参数结构 `mpv_opengl_init_params`、`MPV_RENDER_PARAM_OPENGL_INIT_PARAMS`
-   （`vendor/mpv/include/mpv/render_gl.h` 有完整声明）
-3. 把 `mpv_render_context` 绑到当前 GL context，渲染回调里请求重绘
-4. 断流自续：监听 `EndFile` → `needs_reconnect()` → 重新 `resolve` → `Player::load`
-5. 验收：两台机器各跑 10 分钟，画面不断、声音不断
+**实现地图**：
+- `em-player/src/ffi.rs`：render.h / render_gl.h 的 FFI（param 结构、fbo、init params）
+- `em-player/src/render.rs`：`RenderContext` 安全封装（create / render(fbo=0, flip_y) / update callback / report_swap）
+- `em-ui/src/smoke.rs`：winit 0.30（ApplicationHandler）+ glutin 0.32（Surface/Context 分离模型）+ glow
+- `em-ui/src/png.rs`：零依赖 PNG 编码器（stored deflate），截帧自检用
 
-**M1 是风险闸门**：interop 走不通就按 `PROJECT.md` §5 切方案 B（Windows-only）。
+**踩过的坑（改代码前先读，都是实测付出代价的）**：
+
+1. **FFI 回调的指针绝不能指向栈上局部值，也不能跟着 struct 搬家**。
+   mpv 会长期持有 `get_proc_address_ctx` 和 update callback 的裸指针。两个真实段错误：
+   - resolver 是 `create()` 里的栈局部变量 → create 返回后悬空 → 渲染时段错误。
+     修法：`Box<ProcResolver>` 堆分配、struct 持有。
+   - update callback 的 Box 头部（fat pointer）存在 struct 字段里，但 struct 从
+     resumed 的栈局部 move 进 Running 后字段地址变了 → mpv 线程回调摸旧地址 → 段错误。
+     修法：**双 Box**（`Option<Box<UpdateCallback>>`），内层目标稳定在堆上，mpv 存内层地址。
+   规则：**凡是交给 mpv 的上下文指针，目标必须堆分配且地址终身稳定。**
+
+2. **glow 的构造必须放在 GL context current 之后**。`glow::Context::from_loader_function_cstr`
+   构造时要读 GL_VERSION，没有 current context 直接 panic。顺序：window → surface → context →
+   `make_current(&surface)` → glow → mpv render context。
+
+3. **glutin 0.32 是 Surface/Context 分离模型**：`swap_buffers(&ctx)` / `resize(&ctx, w, h)`
+   都在 Surface 上，make_current 是 `not_current.make_current(&surface)`。
+   winit 0.30 用 `ApplicationHandler<T>` + `run_app`，user_event 用 `EventLoopProxy` 唤醒。
+
+4. **窗口 `inner_size()` 是物理像素**（DPI 缩放后），mpv render 参数和 viewport 都要用物理像素。
+
+5. **macOS 注意**：本里程碑全部在 Windows 验证；mac 的 CGL 路径理论一致（render API 原生支持），
+   首跑若在 glow 构造或 render 段错误，按坑 1/2 排查（`--gui` 的亮度自检会直接告诉你卡在哪一步）。
+
+**下一里程碑 M2（多路合成）的任务**：
+1. 布局引擎进 `em-core`（行式打包 + 候选评分，§4.5 已有算法与观感声明）
+2. mpv render 到 FBO 纹理（`MPV_RENDER_PARAM_OPENGL_FBO` 传非 0 fbo），N 路 → 布局矩阵合成上屏
+3. 每路独立 volume/mute（Player 属性已支持，UI 接线）
+4. 验收：任意 N ∈ 1..=12 排布正确、混竖屏格不压扁、逐路调音量互不影响
 
 ## 9. 提交与发布
 

@@ -14,3 +14,4 @@ path = "src/main.rs"
 [dependencies]
 em-player = { path = "../em-player" }
 em-resolve = { path = "../em-resolve" }
+em-ui = { path = "../em-ui" }

@@ -16,6 +16,9 @@
 //!    天然互相独立（`PROJECT.md` §4.4）。
 
 mod ffi;
+mod render;
+
+pub use render::{RenderContext, UpdateCallback};
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_ulong, c_void};
@@ -51,6 +54,23 @@ type FnErrorString = unsafe extern "C" fn(c_int) -> *const c_char;
 type FnClientApiVersion = unsafe extern "C" fn() -> c_ulong;
 type FnFree = unsafe extern "C" fn(*mut c_void);
 type FnRequestLogMessages = unsafe extern "C" fn(*mut ffi::mpv_handle, *const c_char) -> c_int;
+
+// ---- render API（render.h；M1 起使用）----
+type FnRenderContextCreate = unsafe extern "C" fn(
+    *mut *mut ffi::mpv_render_context,
+    *mut ffi::mpv_handle,
+    *mut ffi::mpv_render_param,
+) -> c_int;
+type FnRenderContextFree = unsafe extern "C" fn(*mut ffi::mpv_render_context);
+type FnRenderContextRender =
+    unsafe extern "C" fn(*mut ffi::mpv_render_context, *mut ffi::mpv_render_param) -> c_int;
+type FnRenderContextSetUpdateCallback = unsafe extern "C" fn(
+    *mut ffi::mpv_render_context,
+    Option<unsafe extern "C" fn(*mut c_void)>,
+    *mut c_void,
+);
+type FnRenderContextUpdate = unsafe extern "C" fn(*mut ffi::mpv_render_context) -> u64;
+type FnRenderContextReportSwap = unsafe extern "C" fn(*mut ffi::mpv_render_context);
 
 /// 播放器层错误。
 #[derive(Debug)]
@@ -114,6 +134,13 @@ struct Api {
     client_api_version: FnClientApiVersion,
     free: FnFree,
     request_log_messages: FnRequestLogMessages,
+    // render API
+    render_context_create: FnRenderContextCreate,
+    render_context_free: FnRenderContextFree,
+    render_context_render: FnRenderContextRender,
+    render_context_set_update_callback: FnRenderContextSetUpdateCallback,
+    render_context_update: FnRenderContextUpdate,
+    render_context_report_swap: FnRenderContextReportSwap,
 }
 
 impl Lib {
@@ -202,6 +229,14 @@ impl Api {
             client_api_version: unsafe { sym(lib, b"mpv_client_api_version\0")? },
             free: unsafe { sym(lib, b"mpv_free\0")? },
             request_log_messages: unsafe { sym(lib, b"mpv_request_log_messages\0")? },
+            render_context_create: unsafe { sym(lib, b"mpv_render_context_create\0")? },
+            render_context_free: unsafe { sym(lib, b"mpv_render_context_free\0")? },
+            render_context_render: unsafe { sym(lib, b"mpv_render_context_render\0")? },
+            render_context_set_update_callback: unsafe {
+                sym(lib, b"mpv_render_context_set_update_callback\0")?
+            },
+            render_context_update: unsafe { sym(lib, b"mpv_render_context_update\0")? },
+            render_context_report_swap: unsafe { sym(lib, b"mpv_render_context_report_swap\0")? },
         })
     }
 }
@@ -403,6 +438,19 @@ impl Player {
     /// 创建过程中被容忍的选项错误（mpv 版本差异时会出现）。
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    /// 内部句柄，仅给本 crate 的 [`RenderContext`] 用。
+    ///
+    /// 生命周期约定：`RenderContext::create` 拿到的指针只在 `Player` 存活期间有效，
+    /// 且 `RenderContext` 必须先于 `Player` Drop（由使用方保证，见 render.rs 的文档）。
+    pub(crate) fn raw_handle(&self) -> *mut ffi::mpv_handle {
+        self.handle
+    }
+
+    /// 播放器持有的 libmpv 函数表（RenderContext 创建需要）。
+    pub fn lib(&self) -> &Arc<Lib> {
+        &self.lib
     }
 
     /// 加载一条流。会先设置 `referrer` / `user-agent`，再 `loadfile`。

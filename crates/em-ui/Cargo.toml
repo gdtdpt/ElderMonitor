@@ -1,6 +1,6 @@
 [package]
 name = "em-ui"
-description = "窗口、布局渲染与交互（M1 起实现）"
+description = "窗口、布局渲染与交互"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,3 +8,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+em-player = { path = "../em-player" }
+em-resolve = { path = "../em-resolve" }
+winit = "0.30"
+glutin = "0.32"
+glutin-winit = "0.5"
+glow = "0.18"
+raw-window-handle = "0.6"
